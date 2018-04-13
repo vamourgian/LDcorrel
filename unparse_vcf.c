@@ -7,14 +7,18 @@ void printHelp (FILE *fp)
     fprintf(fp," VCF_unparser_demo\n");
     fprintf(fp,"\t -input inputFolder\n");
     fprintf(fp,"\t -output outputFile\n");
-    fprintf(fp,"\t -Wmin snipID\n");
-    fprintf(fp,"\t -Wmax snipID\n");
+    fprintf(fp,"\t -Wmin snip index\n");
+    fprintf(fp,"\t -Wmax snip index\n");
+    fprintf(fp,"\t -posWmin snip pos\n");
+    fprintf(fp,"\t -posWmax snip pos\n");
     fprintf(fp,"\n\n");
     fprintf(fp,"\t-input <STRING>\t\tSpecifies the path of the input alignment parsed files\n");
     fprintf(fp,"\t-output <STRING>\t\tSpecifies the name of the output alignment file.\n");
     fprintf(fp,"\t      \t\t\tSupported file formats: VCF.\n\n");
-    fprintf(fp,"\t-Wmin ID of the minimum snip to be included, minimum 1 (default)\n");
-    fprintf(fp,"\t-Wmax ID of the maximum snip to be included, maximum total Snips (default)\n");
+    fprintf(fp,"\t-Wmin \t\t\tindex of the minimum snip to be included, minimum 1 (default)\n");
+    fprintf(fp,"\t-Wmax \t\t\tindex of the maximum snip to be included, maximum total Snips (default)\n");
+    fprintf(fp,"\t-posWmin \t\t\tpos of the minimum snip to be included, must be valid\n");
+    fprintf(fp,"\t-posWmax \t\t\tpos of the maximum snip to be included, must be valid\n");
     fprintf(fp,"\n\n");
 }
 
@@ -22,7 +26,11 @@ void commandLineParser(int argc, char** argv,
                        char * inPath, 
                        char * outfile,
                        int * Wmin,
-                       int * Wmax)
+                       int * Wmax,
+                       int *Wset,
+                       int * posWmin,
+                       int * posWmax,
+                       int *posWset)
 {
     int i, pathSet = 0, fileSet=0;
     
@@ -69,6 +77,7 @@ void commandLineParser(int argc, char** argv,
             if (i!=argc-1)
             {           
                 *Wmin = atoi(argv[++i]);
+                *Wset = 1;
             }
             continue;
         }
@@ -78,11 +87,32 @@ void commandLineParser(int argc, char** argv,
             if (i!=argc-1)
             {           
                 *Wmax = atoi(argv[++i]);
+                *Wset = 1;
+            }
+            continue;
+        }
+
+        if(!strcmp(argv[i], "-posWmin")) 
+        {
+            if (i!=argc-1)
+            {           
+                *posWmin = atoi(argv[++i]);
+                *posWset = 1;
+            }
+            continue;
+        }
+
+        if(!strcmp(argv[i], "-posWmax")) 
+        {
+            if (i!=argc-1)
+            {           
+                *posWmax = atoi(argv[++i]);
+                *posWset = 1;
             }
             continue;
         }
         
-        if(!strcmp(argv[i], "-help")||!strcmp(argv[i], "-h"))
+        if(!strcmp(argv[i], "-help")||!strcmp(argv[i], "-h")||!strcmp(argv[i], "--help"))
         {             
             printHelp (stdout);
             
@@ -102,6 +132,12 @@ void commandLineParser(int argc, char** argv,
     if (fileSet==0)
     {
         fprintf(stderr, "\n ERROR: Please specify an alignment folder with -input\n\n");
+        exit(0);
+    }
+
+    if((*Wset)==1 && (*posWset)==1)
+    {
+        fprintf(stderr, "\n ERROR: Please specify an index window or a pos window, not both\n\n");
         exit(0);
     }
 }
@@ -181,10 +217,10 @@ void readHeaderFile(gzFile fpOut, char* inputPathName, char ** headerLine1, char
     return;
 }
 
-void readPart(gzFile fpOut, char* inputPathName, char *allignmentId, int * snipSize, int *counter, char ** headerLine1, char ** headerLine2, int *snipsPerFile, int *Wmin, int *Wmax, char **line, int* lineLength, char **word, int* wordLength)
+void readPart(gzFile fpOut, char* inputPathName, char *allignmentId, int * eop, int totalSnips, int snipSize, int *counter, char ** headerLine1, char ** headerLine2, int snipsPerFile, int Wmin, int Wmax, int Wset, int posWmin, int *tmpPosMinIndex, int posWmax, int posWset, char **line, int* lineLength, char **word, int* wordLength)
 {
-    int tmpId=0,tmpMin=0,tmpMax=0, fileFound = 0;
-    int eol=0, eof=0, status;
+    int tmpId=0,tmpMin=0,tmpMax=0,tmpPosMin=0,tmpPosMax=0, fileFound = 0, pos;
+    int eol=0, eof = 0, status;
     char inputFileName[INFILENAMESIZE+30];
     DIR *dp;
     gzFile fpIn;
@@ -199,20 +235,25 @@ void readPart(gzFile fpOut, char* inputPathName, char *allignmentId, int * snipS
         lstat(entry->d_name,&statbuf);
         if(!S_ISDIR(statbuf.st_mode)) {
             if(strstr(entry->d_name, allignmentId) != NULL && strstr(entry->d_name, "header") == NULL) {
-                sscanf(entry->d_name,"%d_%d_%d",&tmpId,&tmpMin,&tmpMax);
-                if((tmpMin <= (*Wmin + (*counter)))  && ((*Wmin + (*counter)) <= tmpMax) && (((tmpMax - tmpMin + 1) == *snipsPerFile) || tmpMax == *Wmax)) {
+                sscanf(entry->d_name,"%d_%d_%d_%d_%d",&tmpId,&tmpMin,&tmpMax,&tmpPosMin,&tmpPosMax);
+                if(((tmpMin <= (Wmin + (*counter))  && (Wmin + (*counter)) <= tmpMax && Wset == 1) || ( ((tmpPosMin <= posWmin   && posWmin <= tmpPosMax && *tmpPosMinIndex == 0) || (tmpMin <= *tmpPosMinIndex  && *tmpPosMinIndex <= tmpMax)) && posWset == 1) || (tmpMin <= (1 + (*counter))  && (1 + (*counter)) <= tmpMax && Wset == 0 && posWset == 0)) && (((tmpMax - tmpMin + 1) == snipsPerFile) || tmpMax == totalSnips)) {
                     sprintf(inputFileName,"%s%s",inputPathName,entry->d_name);
                     fileFound = 1;
                     break;
                 }
             }
-        } 
+        }
     }
     status = chdir("..");
     closedir(dp);
     if(fileFound == 1) {
         printf("\033[A\33[2K");
-        printf("Opening file %s, %d %%\n",inputFileName,((*counter)*100)/(*Wmax-*Wmin));
+        if(Wset == 1)
+        	printf("Opening file %s, %d %%\n",inputFileName,((*counter)*100)/(Wmax-Wmin+1));
+        else if(posWset == 1)
+        	printf("Opening file %s\n",inputFileName);
+        else
+        	printf("Opening file %s, %d %%\n",inputFileName,((*counter)*100)/totalSnips);
         fpIn = gzopen(inputFileName,"r");
         if(fpIn == NULL) {
             printf("failed to open file %s", inputFileName);
@@ -233,38 +274,47 @@ void readPart(gzFile fpOut, char* inputPathName, char *allignmentId, int * snipS
                         assert(0);
                    }
                    else {
-                        while(eof == 0 && (*counter)< (*Wmax - *Wmin + 1)) {
+                   		do{
                             status =  getNextLine(fpIn, line, &eol, &eof, lineLength);
-                            if(status == 1 && eol==1 && tmpMin >= *Wmin && tmpMin <= *Wmax) {
-                                writeLine(fpOut,line);
-                                (*counter)++;
+                            if(status == 1 && eol==1){
+                            	int index = 0;
+					            status = getWordFromString(*line, *word, &eol, wordLength, &index);//chrom
+					            assert(status);
+					            status = getWordFromString(*line, *word, &eol, wordLength, &index);//pos
+					            assert(status);
+						        pos = atoi(*word);
+						        if((tmpMin >= Wmin && tmpMin <= Wmax && Wset ==1) || (pos >= posWmin && pos <= posWmax && posWset ==1) || (Wset ==0 && posWset == 0)){
+		                            writeLine(fpOut,line);
+		                            (*counter)++;
+		                        }
+		                        tmpMin++;
                             }
-                            tmpMin++;
-                        }
+                            else {
+                            	pos = 0;
+                            }
+                        }while((eof) == 0 && ( ((*counter)< (Wmax - Wmin + 1) && Wset == 1) || (pos < posWmax && posWset == 1) || ((*counter)< totalSnips && Wset == 0 && posWset == 0) ));
+                        *tmpPosMinIndex = tmpMax+1;
+                        if( ((*counter)>= (Wmax - Wmin + 1) && Wset == 1) || (pos >= posWmax && posWset == 1) || ((*counter)>= totalSnips && Wset == 0 && posWset == 0) )
+                        	*eop = 1;
                    }
                }
            }
         }
         else {
-            printf("file %s empty",inputFileName);
+            printf("file %s empty\n",inputFileName);
             assert(0);
         }
         gzclose(fpIn);
     }
     else {
-        if(*counter > (*Wmax - *snipsPerFile))
-            printf("File missing: probably %s_%d_%d.vcf.gz or %s_%d_%d.vcf.gz\n",allignmentId,(*Wmin + (*counter)),(*Wmin + (*counter) + *snipsPerFile-1),allignmentId,(*Wmin + (*counter)),*Wmax);
-        else
-            printf("File missing: probably %s_%d_%d.vcf.gz\n",allignmentId,(*Wmin + (*counter)),(*Wmin + (*counter) + *snipsPerFile-1));
+        printf("File missing or wrong window\n");
         assert(0);
     }
-    //printf("--closing file %s, %d %% \n",inputFileName,((*counter)*100)/(*Wmax-*Wmin));
-
 }
 
 int main(int argc, char** argv)
 {
-    int snipSize = 0,totalSnips = 0,snipsPerFile=0, counter = 0, Wmin = 0, Wmax = 0;
+    int snipSize = 0,totalSnips = 0,snipsPerFile=0, counter = 0, Wmin = 0, Wmax = 0, Wset = 0, posWmin = 0, posWmax = 0, posWset = 0, eop = 0,tmpPosMinIndex=0;
     
     double time1,time2;
     char inputPathName[INFILENAMESIZE];
@@ -278,8 +328,7 @@ int main(int argc, char** argv)
     headerLine1 = (char **) malloc(sizeof(char*));
     headerLine2 = (char **) malloc(sizeof(char*));
 
-    commandLineParser(argc, argv, inputPathName, outputFileName, &Wmin, &Wmax);
-    
+    commandLineParser(argc, argv, inputPathName, outputFileName, &Wmin, &Wmax, &Wset, &posWmin, &posWmax, &posWset);
     char **line = (char**)malloc(sizeof(char*));
     *line = (char*)malloc(sizeof(char)*STRINGLENGTH);
     char **word = (char**)malloc(sizeof(char*));
@@ -310,8 +359,8 @@ int main(int argc, char** argv)
     	snipsPerFile = totalSnips;
 
     printf("Total snips: %d, Snip Size: %d bits, Snips per file: %d, Wmin: %d, Wmax: %d\n\n\n",totalSnips,snipSize,snipsPerFile, Wmin, Wmax);
-    while(counter < (Wmax - Wmin + 1)) {
-        readPart(fpOut, inputPathName, allignmentId, &snipSize, &counter, headerLine1, headerLine2, &snipsPerFile, &Wmin, &Wmax, line, &lineLength, word, &wordLength);
+    while(eop == 0) {
+        readPart(fpOut, inputPathName, allignmentId, &eop, totalSnips, snipSize, &counter, headerLine1, headerLine2, snipsPerFile, Wmin, Wmax, Wset, posWmin, &tmpPosMinIndex, posWmax, posWset, line, &lineLength, word, &wordLength);
     }    
     gzclose(fpOut);
     time2 = gettime();

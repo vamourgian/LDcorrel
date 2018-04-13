@@ -99,16 +99,20 @@ void printHelp (FILE *fp)
     fprintf(fp,"\t -input inputFile\n");
     fprintf(fp,"\t -output outputFolder\n");
     fprintf(fp,"\t -size parts_size\n");
-    fprintf(fp,"\t -Wmin snipID\n");
-    fprintf(fp,"\t -Wmax snipID\n");
+    fprintf(fp,"\t -Wmin snip index\n");
+    fprintf(fp,"\t -Wmax snip index\n");
+    fprintf(fp,"\t -posWmin snip pos\n");
+    fprintf(fp,"\t -posWmax snip pos\n");
     fprintf(fp,"\t -toSingleOutput\n");
     fprintf(fp,"\n\n");
     fprintf(fp,"\t-input <STRING>\t\tSpecifies the name of the input alignment file.\n");
     fprintf(fp,"\t-output <STRING>\tSpecifies the path of the output alignment files.\n");
     fprintf(fp,"\t-size <STRING>\t\tSpecifies the size of the memory footprint of the output alignment files in MB, if toSingleOutput is set, size is not needed.\n");
     fprintf(fp,"\t      \t\t\tSupported file formats: VCF.\n\n");
-    fprintf(fp,"\t-Wmin \t\t\tID of the minimum snip to be included, minimum 1 (default)\n");
-    fprintf(fp,"\t-Wmax \t\t\tID of the maximum snip to be included, maximum total Snips (default)\n");
+    fprintf(fp,"\t-Wmin \t\t\tindex of the minimum snip to be included, minimum 1 (default)\n");
+    fprintf(fp,"\t-Wmax \t\t\tindex of the maximum snip to be included, maximum total Snips (default)\n");
+    fprintf(fp,"\t-posWmin \t\t\tpos of the minimum snip to be included, must be valid\n");
+    fprintf(fp,"\t-posWmax \t\t\tpos of the maximum snip to be included, must be valid\n");
     fprintf(fp,"\t-toSingleOutput\t\tUsed to generate a new VCF that is part of the input file, -Wmin and -Wmax mandatory with this command\n");
     fprintf(fp,"\n\n");
 }
@@ -120,9 +124,13 @@ void commandLineParser(int argc, char** argv,
                        int * size,
                        int * Wmin,
                        int * Wmax,
+                       int *Wset,
+                       int * posWmin,
+                       int * posWmax,
+                       int *posWset,
                        int * toSingleOutput)
 {
-    int i, pathSet = 0, fileSet=0, sizeSet=0, wminSet=0, wmaxSet=0;
+    int i, pathSet = 0, fileSet=0, sizeSet=0;
     gzFile fp;
     
     for(i=1; i<argc; ++i)
@@ -219,7 +227,7 @@ void commandLineParser(int argc, char** argv,
             if (i!=argc-1)
             {           
                 *Wmin = atoi(argv[++i]);
-                wminSet = 1;
+                *Wset = 1;
             }
             continue;
         }
@@ -229,10 +237,31 @@ void commandLineParser(int argc, char** argv,
             if (i!=argc-1)
             {           
                 *Wmax = atoi(argv[++i]);
-                wmaxSet =1;
+                *Wset = 1;
             }
             continue;
         }
+
+        if(!strcmp(argv[i], "-posWmin")) 
+        {
+            if (i!=argc-1)
+            {           
+                *posWmin = atoi(argv[++i]);
+                *posWset = 1;
+            }
+            continue;
+        }
+
+        if(!strcmp(argv[i], "-posWmax")) 
+        {
+            if (i!=argc-1)
+            {           
+                *posWmax = atoi(argv[++i]);
+                *posWset = 1;
+            }
+            continue;
+        }
+
         if(!strcmp(argv[i], "-toSingleOutput")) 
         {
         	*toSingleOutput = 1;
@@ -268,9 +297,15 @@ void commandLineParser(int argc, char** argv,
         exit(0);
     }
 
-    if(*toSingleOutput == 1 &&(wminSet == 0 && wmaxSet == 0))
+    if(*toSingleOutput == 1 && (*Wset)==0 && (*posWset)==0)
     {
-        fprintf(stderr, "\n ERROR: Please specify a window size for the output file with -Wmin and/or Wmax\n\n");
+        fprintf(stderr, "\n ERROR: Please specify an index window with -Wmin and/or Wmax, or a pos window with -posWmin and/or -posWmax\n\n");
+        exit(0);
+    }
+
+    if((*Wset)==1 && (*posWset)==1)
+    {
+        fprintf(stderr, "\n ERROR: Please specify an index window or a pos window, not both\n\n");
         exit(0);
     }
 }
@@ -312,10 +347,10 @@ gzFile createHeaderFile(gzFile fpIn, char* outputPathName, char ** headerLine1, 
     return NULL;
 }
 
-void createPart(gzFile fpIn, gzFile *fpOut, char* outputPathName, int *first, char *allignmentId, int * snipSize,int *eof, int *counter, char ** headerLine1, char ** headerLine2, int *size, int *maxcount, int *startingValue, int *endingValue, char **line, int* lineLength, char **word, int* wordLength, int lines, int Wmin, int Wmax, int *lineCounter, int *printDelay)
+void createPart(gzFile fpIn, gzFile *fpOut, char* outputPathName, int *first, char *allignmentId, int * snipSize,int *eof, int *counter, char ** headerLine1, char ** headerLine2, int *size, int *maxcount, int *startingValue, int *endingValue, char **line, int* lineLength, char **word, int* wordLength, int lines, int Wmin, int Wmax, int Wset, int posWmin, int posWmax, int posWset, int *lineCounter, int *printDelay, int * firstPos)
 {    
     char outputFile[INFILENAMESIZE+30];
-    int status=-1, eol=0,index = 0;
+    int status=-1, eol=0,index = 0,pos;
     if(*first == 1) {
         status =  getNextLine(fpIn, line, &eol, eof, lineLength);
         if(status == 1 && eol==1) {
@@ -323,6 +358,7 @@ void createPart(gzFile fpIn, gzFile *fpOut, char* outputPathName, int *first, ch
             assert(status);
             status = getWordFromString(*line, *word, &eol, wordLength, &index);//pos
             assert(status);
+	        pos = atoi(*word);
             status = getWordFromString(*line, *word, &eol, wordLength, &index);//id
             assert(status);
             status = getWordFromString(*line, *word, &eol, wordLength, &index);//ref
@@ -348,12 +384,25 @@ void createPart(gzFile fpIn, gzFile *fpOut, char* outputPathName, int *first, ch
     		if(*maxcount < 0 || *maxcount > lines)
     			*maxcount = lines;
 
-    		printf("Total snips: %d, Snip Size: %d bits, Snips per file: %d, Wmin: %d, Wmax: %d\n\n\n",lines,*snipSize,*maxcount, Wmin, Wmax);
-    		if((*lineCounter) >= Wmin) {
-            	sprintf(outputFile,"%s%s_%d_%d.vcf.gz",outputPathName,allignmentId,*lineCounter,(*lineCounter)+(*maxcount)-1);
+        	if(Wset == 1)
+    			printf("Total snips: %d, Snip Size: %d bits, Snips per file: %d, Wmin: %d, Wmax: %d\n\n\n",lines,*snipSize,*maxcount, Wmin, Wmax);
+    		else if(posWset == 1)
+    			printf("Total snips: %d, Snip Size: %d bits, Snips per file: %d, posWmin: %d, posWmax: %d\n\n\n",lines,*snipSize,*maxcount, posWmin, posWmax);
+    		else
+    			printf("Total snips: %d, Snip Size: %d bits, Snips per file: %d\n\n\n",lines,*snipSize,*maxcount);
+
+    		if((Wset == 1 && *lineCounter >= Wmin) || (posWset == 1 && pos >= posWmin) || (Wset == 0 && posWset == 0)) {
+            	sprintf(outputFile,"%s%s_%d_%d_%d_.vcf.gz",outputPathName,allignmentId,*lineCounter,(*lineCounter)+(*maxcount)-1,pos);
             	*startingValue = *lineCounter;
             	*endingValue = (*lineCounter)+(*maxcount)-1;
-                printf("Creating File: %s, %d%%\n",outputFile, ((*counter)*100)/(Wmax-Wmin+1));
+            	*firstPos = pos;
+
+	        	if(Wset == 1)
+                	printf("Creating File: %s, %d%%\n",outputFile, ((*counter)*100)/(Wmax-Wmin+1));
+            	else if (posWset == 1) 
+                	printf("Creating File: %s\n",outputFile);
+	            else
+                	printf("Creating File: %s, %d%%\n",outputFile, ((*counter)*100)/lines);
     		
             	*fpOut = gzopen(outputFile,"w");
 	            if(*fpOut == NULL) {
@@ -369,14 +418,21 @@ void createPart(gzFile fpIn, gzFile *fpOut, char* outputPathName, int *first, ch
         	else
         		*first = 2;  
 
-            if((*lineCounter) >= Wmax) {
+            if((Wset == 1 && *lineCounter >= Wmax) || (posWset == 1 && pos >= posWmax) || (Wset == 0 && posWset == 0 && *lineCounter >= lines)) {
             	*eof =1;
         		gzclose(*fpOut);
+        		if((*counter) == 0) {
+		        	if(Wset == 1)
+		        		printf("ERROR: Less snips than expected found\n");
+		        	else if(posWset == 1)
+		        		printf("ERROR: pos window is wrong\n");
+		        	exit(0);
+        		}
 
 	    		char outputFileNew[INFILENAMESIZE+30];
 				printf("\033[A\33[2K");
             	printf("Creating File: %s, 100%%\n",outputFile);  
-	            sprintf(outputFileNew,"%s%s_%d_%d.vcf.gz",outputPathName,allignmentId,*startingValue,(*lineCounter));
+	            sprintf(outputFileNew,"%s%s_%d_%d_%d_%d.vcf.gz",outputPathName,allignmentId,*startingValue,(*lineCounter),*firstPos,pos);
 				printf("Renaming %s to %s\n",outputFile,outputFileNew);
 				int ret = rename(outputFile, outputFileNew);
 				if(ret != 0) {
@@ -395,14 +451,26 @@ void createPart(gzFile fpIn, gzFile *fpOut, char* outputPathName, int *first, ch
         if(status == 1 && eol==1) {
             status = getWordFromString(*line, *word, &eol, wordLength, &index);//chrom
             assert(status);
+            char * allID = malloc(strlen(*word)*sizeof(char));
+            strcpy(allID,*word);
+            status = getWordFromString(*line, *word, &eol, wordLength, &index);//pos
+            assert(status);
+            pos = atoi(*word);
     		(*lineCounter)++;
-            if(!strcmp(*word,allignmentId)) {
-    			if((*lineCounter) >= Wmin) {
-            		sprintf(outputFile,"%s%s_%d_%d.vcf.gz",outputPathName,allignmentId,*lineCounter,(*lineCounter)+(*maxcount)-1);
+            if(!strcmp(allID,allignmentId)) {
+    			if((Wset == 1 && *lineCounter >= Wmin) || (posWset == 1 && pos >= posWmin) || (Wset == 0 && posWset == 0)) {
+            	sprintf(outputFile,"%s%s_%d_%d_%d_.vcf.gz",outputPathName,allignmentId,*lineCounter,(*lineCounter)+(*maxcount)-1,pos);
             		*startingValue = *lineCounter;
             		*endingValue = (*lineCounter)+(*maxcount)-1;
+            		*firstPos = pos;
+
 	    			printf("\033[A\33[2K");
-	                printf("Creating File: %s, %d%%\n",outputFile, ((*counter)*100)/(Wmax-Wmin+1));
+					if(Wset == 1) 
+	                	printf("Creating File: %s, %d%%\n",outputFile, ((*counter)*100)/(Wmax-Wmin+1));
+	            	else if (posWset == 1) 
+	                	printf("Creating File: %s\n",outputFile);
+		            else
+	                	printf("Creating File: %s, %d%%\n",outputFile, ((*counter)*100)/lines);
 
 	                *fpOut = gzopen(outputFile,"w");
 	                if(*fpOut == NULL) {
@@ -418,14 +486,21 @@ void createPart(gzFile fpIn, gzFile *fpOut, char* outputPathName, int *first, ch
 		    	else
 		    		*first = 2;  
 
-                if((*lineCounter) >= Wmax) {
-                	*eof =1;
+                if((Wset == 1 && *lineCounter >= Wmax) || (posWset == 1 && pos >= posWmax) || (Wset == 0 && posWset == 0 && *lineCounter >= lines)) {
+            		*eof =1;
             		gzclose(*fpOut);
+	        		if((*counter) == 0) {
+			        	if(Wset == 1)
+			        		printf("ERROR: Less snips than expected found\n");
+			        	else if(posWset == 1)
+			        		printf("ERROR: pos window is wrong\n");
+			        	exit(0);
+	        		}
 
 		    		char outputFileNew[INFILENAMESIZE+30];
 					printf("\033[A\33[2K");
-			        printf("Creating File: %s, 100%%\n",outputFile);  
-		            sprintf(outputFileNew,"%s%s_%d_%d.vcf.gz",outputPathName,allignmentId,*startingValue,(*lineCounter));
+			        printf("Creating File: %s, 100%%\n",outputFile);   
+	            	sprintf(outputFileNew,"%s%s_%d_%d_%d_%d.vcf.gz",outputPathName,allignmentId,*startingValue,(*lineCounter),*firstPos,pos);
 					printf("Renaming %s to %s\n",outputFile,outputFileNew);
 					int ret = rename(outputFile, outputFileNew);
 					if(ret != 0) {
@@ -435,7 +510,8 @@ void createPart(gzFile fpIn, gzFile *fpOut, char* outputPathName, int *first, ch
                 }
             }
             else
-            	printf("WARNING: snip %d is allignment %s and will be skipped\n",*lineCounter,*word);
+            	printf("WARNING: snip %d is allignment %s and will be skipped\n",*lineCounter,allID);
+            free(allID);
         }
         else if(*eof ==1) {
         	return;
@@ -446,50 +522,67 @@ void createPart(gzFile fpIn, gzFile *fpOut, char* outputPathName, int *first, ch
         if(status == 1 && eol==1) {
             status = getWordFromString(*line, *word, &eol, wordLength, &index);//chrom
             assert(status);
+            char * allID = malloc(strlen(*word)*sizeof(char));
+            strcpy(allID,*word);
+            status = getWordFromString(*line, *word, &eol, wordLength, &index);//pos
+            assert(status);
+            pos = atoi(*word);
     		(*lineCounter)++;
 
-    		if((((*counter)*100)/(Wmax-Wmin+1))%5 == 0 && (*printDelay) != (((*counter)*100)/(Wmax-Wmin+1))){
+    		if(Wset == 1 && (((*counter)*100)/(Wmax-Wmin+1))%5 == 0 && (*printDelay) != (((*counter)*100)/(Wmax-Wmin+1))){
     			printf("\033[A\33[2K");
                 printf("Creating File: %s, %d%%\n",outputFile, ((*counter)*100)/(Wmax-Wmin+1));   
                 (*printDelay) = (((*counter)*100)/(Wmax-Wmin+1));    			
     		}
+    		else if(Wset == 0 && posWset == 0 && (((*counter)*100)/lines)%5 == 0 && (*printDelay) != (((*counter)*100)/lines)) {
+    			printf("\033[A\33[2K");
+                printf("Creating File: %s, %d%%\n",outputFile, ((*counter)*100)/lines);  
+                (*printDelay) = (((*counter)*100)/lines); 
+    		}
 
-            if(!strcmp(*word,allignmentId)) {
+            if(!strcmp(allID,allignmentId)) {
                 (*counter)++;
 	            writeLine(*fpOut,line);
-                if((*lineCounter) >= Wmax) {
-                	*eof =1;
+                if((Wset == 1 && *lineCounter >= Wmax) || (posWset == 1 && pos >= posWmax) || (Wset == 0 && posWset == 0 && *lineCounter >= lines)) {
+            		*eof =1;
             		gzclose(*fpOut);
+
+		    		char outputFileNew[INFILENAMESIZE+30];
+            		printf("Creating File: %s, 100%%\n",outputFile);   
+    				sprintf(outputFileNew,"%s%s_%d_%d_%d_%d.vcf.gz",outputPathName,allignmentId,*startingValue,(*lineCounter),*firstPos,pos);
+					printf("Renaming %s to %s\n",outputFile,outputFileNew);
+					int ret = rename(outputFile, outputFileNew);
+					if(ret != 0) {
+						printf("Error: unable to rename the file\n");
+		                assert(0);
+					}
                 }
                 else if((*lineCounter) == (*endingValue)) {
                     *first = 2;
             		gzclose(*fpOut);
-                    //printf("--closed file %s, %d%%\n",outputFile, ((*counter)*100)/lines);
-                    
+
+		    		char outputFileNew[INFILENAMESIZE+30];
+		    		printf("\033[A\33[2K");                
+            		sprintf(outputFileNew,"%s%s_%d_%d_%d_%d.vcf.gz",outputPathName,allignmentId,*startingValue,(*lineCounter),*firstPos,pos);
+					printf("Renaming %s to %s\n",outputFile,outputFileNew);
+					int ret = rename(outputFile, outputFileNew);
+					if(ret != 0) {
+						printf("Error: unable to rename the file\n");
+		                assert(0);
+					}                    
                 }
             }
             else
-            	printf("WARNING: snip %d is allignment %s and will be skipped\n",*lineCounter,*word);
-        }
-        if(*eof ==1) {
-			printf("\033[A\33[2K");
-            printf("Creating File: %s, 100%%\n",outputFile);   
-    		char outputFileNew[INFILENAMESIZE+30];
-            sprintf(outputFileNew,"%s%s_%d_%d.vcf.gz",outputPathName,allignmentId,*startingValue,(*lineCounter));
-			printf("Renaming %s to %s\n",outputFile,outputFileNew);
-			int ret = rename(outputFile, outputFileNew);
-			if(ret != 0) {
-				printf("Error: unable to rename the file\n");
-                assert(0);
-			}
-                   // printf("--closed file %s, %d%%\n",outputFileNew, ((*counter)*100)/lines);
+            	printf("WARNING: snip %d is allignment %s and will be skipped\n",*lineCounter,allID);
+            free(allID);
         }
     }
 }
 
-void createSingleFile(gzFile fpIn, gzFile *fpOut, char* outputPathName, int *counter, char **line, int* lineLength, char **word, int* wordLength, int lines, int Wmin, int Wmax)
+void createSingleFile(gzFile fpIn, gzFile *fpOut, char* outputPathName, int *counter, char **line, int* lineLength, char **word, int* wordLength, int lines, int Wmin, int Wmax, int Wset, int posWmin, int posWmax, int posWset)
 {
-	int eol=0,eof=0, status,index = 0,first = 1, snipSize = 0, lineCounter = 0, printDelay = 0;
+
+	int eol=0,eof=0, status,index = 0,first = 1, snipSize = 0, lineCounter = 0, printDelay = 0,pos,printCount=0,i,firstPos=0;
 	char allignmentId[INFILENAMESIZE+30];
 
     while(1)
@@ -518,6 +611,7 @@ void createSingleFile(gzFile fpIn, gzFile *fpOut, char* outputPathName, int *cou
 	            assert(status);
 	            status = getWordFromString(*line, *word, &eol, wordLength, &index);//pos
 	            assert(status);
+	            pos = atoi(*word);
 	            status = getWordFromString(*line, *word, &eol, wordLength, &index);//id
 	            assert(status);
 	            status = getWordFromString(*line, *word, &eol, wordLength, &index);//ref
@@ -538,24 +632,56 @@ void createSingleFile(gzFile fpIn, gzFile *fpOut, char* outputPathName, int *cou
 	                index++;
 	            }
 	        	lineCounter++;
+	        	if(Wset == 1)
+	    			printf("Total snips: %d, Snip Size: %d bits, Wmin: %d, Wmax: %d\n\n\n",lines,snipSize, Wmin, Wmax);
+	    		else if(posWset == 1)
+	    			printf("Total snips: %d, Snip Size: %d bits, posWmin: %d, posWmax: %d\n\n\n",lines,snipSize, posWmin, posWmax);
 
-	    		printf("Total snips: %d, Snip Size: %d bits, Wmin: %d, Wmax: %d\n\n\n",lines,snipSize, Wmin, Wmax);
-	    		if(lineCounter >= Wmin) {
+	    		if((Wset == 1 && lineCounter >= Wmin) || (posWset == 1 && pos >= posWmin)) {
+	    			if(posWset == 1 && firstPos == 0)
+	    				firstPos = pos;
+	            	writeLine(*fpOut,line);
+	        		(*counter)++;
+	        	}
+	        	else if (Wset == 0 && posWset == 0) {
 	            	writeLine(*fpOut,line);
 	        		(*counter)++;
 	        	}
 
 	        	first = 2;
-	            printf("Processing: %d%%\n",((*counter)*100)/(Wmax-Wmin+1));  
+	        	if(Wset == 1)
+	            	printf("Processing: %d%%\n",((*counter)*100)/(Wmax-Wmin+1));
+            	else if (posWset == 1) {  
+	            	printf("Processing");
+	            	for(i=0;i<=printCount;i++)
+	            		printf(".");
+	            	printf("\n");
+	            	printCount++;
+	            	if(printCount == 5)
+	            		printCount = 0;
+	            }
+	            else
+	            	printf("Processing: %d%%\n",((*counter)*100)/lines);
 
-	            if(lineCounter >= Wmax) {
+	            if((Wset == 1 && lineCounter >= Wmax) || (posWset == 1 && pos >= posWmax) || lineCounter >= lines) {
 	        		gzclose(*fpOut);
+	        		if((*counter) == 0) {
+			        	if(Wset == 1)
+			        		printf("ERROR: Less snips than expected found\n");
+			        	else if(posWset == 1)
+			        		printf("ERROR: pos window is wrong\n");
+			        	exit(0);
+	        		}
 
 		    		char outputFileNew[INFILENAMESIZE+30];
 		    		char outputFile[INFILENAMESIZE+30];
     				printf("\033[A\33[2K");
                 	printf("Processing: 100%%\n");
-		            sprintf(outputFileNew,"%s%s_%d_%d.vcf.gz",outputPathName,allignmentId,Wmin,Wmax);
+	        		if(Wset == 1)
+		            	sprintf(outputFileNew,"%s%s_%d_%d.vcf.gz",outputPathName,allignmentId,Wmin,Wmax);
+            		else if (posWset == 1) 
+		            	sprintf(outputFileNew,"%s%s_%d_%d.vcf.gz",outputPathName,allignmentId,firstPos,pos);
+
 		            sprintf(outputFile,"%stemp.vcf.gz",outputPathName);
 					printf("Renaming %s to %s\n",outputFile,outputFileNew);
 					int ret = rename(outputFile, outputFileNew);
@@ -576,27 +702,54 @@ void createSingleFile(gzFile fpIn, gzFile *fpOut, char* outputPathName, int *cou
 	        if(status == 1 && eol==1) {
 	            status = getWordFromString(*line, *word, &eol, wordLength, &index);//chrom
 	            assert(status);
+	            char * allID = malloc(strlen(*word)*sizeof(char));
+	            strcpy(allID,*word);
+	            status = getWordFromString(*line, *word, &eol, wordLength, &index);//pos
+	            assert(status);
+	            pos = atoi(*word);
 	    		lineCounter++;
 
-	    		if((((*counter)*100)/(Wmax-Wmin+1))%5 == 0 && printDelay != (((*counter)*100)/(Wmax-Wmin+1))){
+	    		if(Wset == 1 && (((*counter)*100)/(Wmax-Wmin+1))%5 == 0 && printDelay != (((*counter)*100)/(Wmax-Wmin+1))){
 	    			printf("\033[A\33[2K");
 	                printf("Processing: %d%%\n",((*counter)*100)/(Wmax-Wmin+1));
 	                printDelay = (((*counter)*100)/(Wmax-Wmin+1));    			
 	    		}
-	            if(!strcmp(*word,allignmentId)) {
-	    			if(lineCounter >= Wmin) {
-			            writeLine(*fpOut,line);
-	        			(*counter)++;
-			        } 
+	    		if(posWset == 1 && (((*counter)*100)/lines)%5 == 0 && printDelay != (((*counter)*100)/lines)) {
+	    			printf("\033[A\33[2K");
+	    			printf("Processing");
+	            	for(i=0;i<=printCount;i++)
+	    				printf(".");
+	            	printf("\n");
+	            	printCount++;
+	            	if(printCount == 5)
+	            		printCount = 0;
+	                printDelay = (((*counter)*100)/lines);    			
+	    		}
+	            if(!strcmp(allID,allignmentId)) {
+		    		if((Wset == 1 && lineCounter >= Wmin) || (posWset == 1 && pos >= posWmin)) {
+		    			if(posWset == 1 && firstPos == 0)
+		    				firstPos = pos;
+		            	writeLine(*fpOut,line);
+		        		(*counter)++;
+		        	}
 
-	                if(lineCounter >= Wmax) {
+	            	if((Wset == 1 && lineCounter >= Wmax) || (posWset == 1 && pos >= posWmax) || lineCounter >= lines) {
 		        		gzclose(*fpOut);
-
+		        		if((*counter) == 0) {
+				        	if(Wset == 1)
+				        		printf("ERROR: Less snips than expected found\n");
+				        	else if(posWset == 1)
+				        		printf("ERROR: pos window is wrong\n");
+				        	exit(0);
+		        		}
 			    		char outputFileNew[INFILENAMESIZE+30];
 			    		char outputFile[INFILENAMESIZE+30];
 	    				printf("\033[A\33[2K");
 	                	printf("Processing: 100%%\n");
-			            sprintf(outputFileNew,"%s%s_%d_%d.vcf.gz",outputPathName,allignmentId,Wmin,Wmax);
+		        		if(Wset == 1)
+			            	sprintf(outputFileNew,"%s%s_%d_%d.vcf.gz",outputPathName,allignmentId,Wmin,Wmax);
+	            		else if (posWset == 1) 
+			            	sprintf(outputFileNew,"%s%s_%d_%d.vcf.gz",outputPathName,allignmentId,firstPos,pos);
 			            sprintf(outputFile,"%stemp.vcf.gz",outputPathName);
 						printf("Renaming %s to %s\n",outputFile,outputFileNew);
 						int ret = rename(outputFile, outputFileNew);
@@ -608,10 +761,14 @@ void createSingleFile(gzFile fpIn, gzFile *fpOut, char* outputPathName, int *cou
 	                }
 	            }
 	            else
-	            	printf("WARNING: snip %d is allignment %s and will be skipped\n",lineCounter,*word);
+	            	printf("WARNING: snip %d is allignment %s and will be skipped\n",lineCounter,allID);
+	            free(allID);
 	        }
 	        else if(eof ==1) {
-	        	printf("ERROR: Less snips than expected found\n");
+	        	if(Wset == 1)
+	        		printf("ERROR: Less snips than expected found\n");
+	        	else if(posWset == 1)
+	        		printf("ERROR: pos windows is wrong\n");
 	        	exit(0);
 	        }
 	    }
@@ -621,7 +778,7 @@ void createSingleFile(gzFile fpIn, gzFile *fpOut, char* outputPathName, int *cou
 
 int main(int argc, char** argv)
 {
-    int fileFormat=OTHER_FORMAT,size=0,first = 1,snipSize = 0,eof=0,counter = 0,maxcount=0, startingValue=0, endingValue=0, Wmin=0,Wmax=0,toSingleOutput=0, lineCounter = 0, printDelay = 0;
+    int fileFormat=OTHER_FORMAT,size=0,first = 1,snipSize = 0,eof=0,counter = 0,maxcount=0, startingValue=0, endingValue=0, Wmin=0,Wmax=0, Wset = 0, posWmin=0, posWmax=0, posWset = 0,toSingleOutput=0, lineCounter = 0, printDelay = 0, firstPos;
     double time1,time2,time3,time4;
     char inputFileName[INFILENAMESIZE];
     char outputPathName[INFILENAMESIZE];
@@ -632,8 +789,8 @@ int main(int argc, char** argv)
     fpOut = (gzFile*)malloc(sizeof(gzFile));
     char ** headerLine1, ** headerLine2;
     int  lineLength = STRINGLENGTH,wordLength = STRINGLENGTH, lines = 0;
-    commandLineParser(argc, argv, inputFileName, outputPathName, &fileFormat, &size, &Wmin, &Wmax, &toSingleOutput);
-    
+    commandLineParser(argc, argv, inputFileName, outputPathName, &fileFormat, &size, &Wmin, &Wmax, &Wset, &posWmin, &posWmax, &posWset, &toSingleOutput);
+
     char **line = (char**)malloc(sizeof(char*));
     *line = (char*)malloc(sizeof(char)*STRINGLENGTH);
     char **word = (char**)malloc(sizeof(char*));
@@ -643,26 +800,26 @@ int main(int argc, char** argv)
     time1 = gettime();
     lines = countLines(fpIn, line, &lineLength);
     gzclose(fpIn);
+    if(Wset == 1) {
+	    if(Wmin < 1 || Wmin > lines) {
+	    	printf("ERROR: Wmin must be between 1 and totalSnips, setting Wmin to 1 (default)\n");
+	    	Wmin = 1;
+	    }
 
-    if(Wmin == 0)
-    	Wmin = 1;
-    if(Wmax == 0)
-    	Wmax = lines;
+	    if(Wmax < 1 || Wmax > lines) {
+	    	printf("ERROR: Wmax must be between 1 and totalSnips, setting Wmax to total Snips (default)\n");
+	    	Wmax = lines;
+	    }
 
-    if(Wmin < 1 || Wmin > lines) {
-    	printf("ERROR: Wmin must be between 1 and totalSnips, setting Wmin to 1 (default)\n");
-    	Wmin = 1;
-    }
-
-    if(Wmax < 1 || Wmax > lines) {
-    	printf("ERROR: Wmax must be between 1 and totalSnips, setting Wmax to total Snips (default)\n");
-    	Wmax = lines;
-    }
-
-    if(Wmin > Wmax) {
-    	printf("ERROR: Wmin must be <= Wmax, setting Wmin = Wmax\n");
-    	Wmin = Wmax;
-    }
+	    if(Wmin > Wmax) {
+	    	printf("ERROR: Wmin must be <= Wmax, setting Wmin = Wmax\n");
+	    	Wmin = Wmax;
+	    }
+	}
+	else if(posWset == 1) {
+		if(posWmax == 0)
+			posWmax = 2147483646;
+	}
 
     fpIn = gzopen(inputFileName,"r");
     time2 = gettime();
@@ -672,7 +829,7 @@ int main(int argc, char** argv)
     	headerLine2 = (char **) malloc(sizeof(char*));
 	    fpHeader = createHeaderFile(fpIn, outputPathName, headerLine1, headerLine2, line, &lineLength, word, &wordLength);
 	    while(eof == 0)
-	        createPart(fpIn, fpOut, outputPathName, &first, allignmentId, &snipSize,&eof, &counter, headerLine1, headerLine2, &size, &maxcount, &startingValue, &endingValue, line, &lineLength, word, &wordLength, lines, Wmin, Wmax, &lineCounter, &printDelay);
+	        createPart(fpIn, fpOut, outputPathName, &first, allignmentId, &snipSize,&eof, &counter, headerLine1, headerLine2, &size, &maxcount, &startingValue, &endingValue, line, &lineLength, word, &wordLength, lines, Wmin, Wmax, Wset, posWmin, posWmax, posWset, &lineCounter, &printDelay, &firstPos);
 	    
 	    time3 = gettime();
 	    if(maxcount <0 || maxcount>counter)
@@ -703,7 +860,7 @@ int main(int argc, char** argv)
             printf("failed to open file %s", outputFile);
             assert(0);
         }
-		createSingleFile(fpIn, fpOut, outputPathName, &counter, line, &lineLength, word, &wordLength, lines, Wmin, Wmax);
+		createSingleFile(fpIn, fpOut, outputPathName, &counter, line, &lineLength, word, &wordLength, lines, Wmin, Wmax, Wset, posWmin, posWmax, posWset);
 	    time3 = gettime();
 	}
 
