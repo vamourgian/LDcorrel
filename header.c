@@ -223,7 +223,7 @@ int countLines(gzFile fpIn, char **line, int* lineLength)
 	return lines;
 }
 
-int getWordFromString(char* line, char * word, int *readEOL, int *wordLength, int *index)
+int getWordFromString(char* line, char ** word, int *readEOL, int *wordLength, int *index)
 {
     *readEOL = 0;
     
@@ -234,7 +234,7 @@ int getWordFromString(char* line, char * word, int *readEOL, int *wordLength, in
     if(ent == '\0')
     {
         *readEOL = 1;
-        word[0] = '\0';
+        (*word)[0] = '\0';
         return 0;
     }
     
@@ -245,19 +245,41 @@ int getWordFromString(char* line, char * word, int *readEOL, int *wordLength, in
         {
             (*wordLength) = (*wordLength) << 1; 
             
-            word = realloc( word, (*wordLength) * sizeof(char) );       
+            (*word) = realloc( (*word), (*wordLength) * sizeof(char) );       
         }
         
-        word[i++] = ent;
+        (*word)[i++] = ent;
         
         
         ent = line[(*index)++];
     }
     
-    word[i] = '\0';
+    (*word)[i] = '\0';
     
     if(ent == 10 || ent == 13 || ent =='\0')
         *readEOL = 1;
     
     return 1;
+}
+
+int cmpfunc (const void * a, const void * b) {
+   return ( *(int*)a - *(int*)b );
+}
+
+int sortList(char* inputListName,int** list, char** line, int *lineLength) {
+    gzFile fpIn=NULL;
+    fpIn = gzopen(inputListName,"r");
+    int status,eol=0,eof=0,pos,listItems = 0;
+    while(eof == 0) {
+
+        status =  getNextLine(fpIn, line, &eol, &eof, lineLength);
+        if(status == 1 && eol==1) {
+            pos = atoi(*line);
+            listItems++;
+            *list = realloc(*list,sizeof(int)*listItems);
+            (*list)[listItems-1] = pos;
+        }
+    }
+    qsort(*list, listItems, sizeof(int), cmpfunc);
+    return listItems;
 }
