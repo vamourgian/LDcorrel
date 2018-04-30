@@ -1,0 +1,30 @@
+
+# Makefile for the parser
+
+CC = gcc
+
+CFLAGS = -O3 -Wall -D_SHARED #-D_UNROLL
+
+LIBRARIES = -lm -lz
+
+EXECNAME = LD_Unparser
+
+OBJS = unparse_vcf.o unparse_vcf_input.o read_file.o
+
+all: $(EXECNAME)
+
+LD_Unparser : $(OBJS)
+	$(CC) $(CFLAGS) -o $(EXECNAME) $(OBJS) $(LIBRARIES)
+
+unparse_vcf.o: unparse_vcf.c 
+	$(CC) $(CFLAGS) -c unparse_vcf.c
+
+unparse_vcf_input.o: unparse_vcf_input.c 
+	$(CC) $(CFLAGS) -c unparse_vcf_input.c
+
+read_file.o: read_file.c 
+	$(CC) $(CFLAGS) -c read_file.c
+
+clean:
+	rm $(EXECNAME)
+	rm $(OBJS)
